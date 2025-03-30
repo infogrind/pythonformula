@@ -78,9 +78,7 @@ def skip_initial_fields(reader):
 def parse_name(reader) -> str:
     while True:
         if not reader.has_next():
-            raise ValueError(
-                f"Unexpected EOF at line {reader.line()} while parsing name."
-            )
+            raise ValueError("Unexpected while parsing name.")
         line = reader.next()
         if not property.match(line):
             raise ValueError(
@@ -99,9 +97,7 @@ def parse_sdist(reader: StdinReader) -> tuple[str, str]:
     debug("Parsing sdist entry.")
     while True:
         if not reader.has_next():
-            raise ValueError(
-                f"Unexpected EOF at line {reader.line()} while parsing name."
-            )
+            raise ValueError("Unexpected EOF while parsing sdist.")
         line = reader.next()
         if line == "[[package]]":
             raise ValueError(
