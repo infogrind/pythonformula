@@ -23,6 +23,18 @@ wheels = [
 ]
 
 [[package]]
+name = "gpt-epub-rename"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "openai" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "openai", specifier = ">=1.68.2" }]
+
+
+[[package]]
 name = "anyio"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }

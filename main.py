@@ -29,10 +29,12 @@ class StdinReader:
         buffer = sys.stdin.readline()
         if buffer == "":
             self.buffer: Optional[str] = None
+            debug(f"EOL reached after {self.current_line} lines.")
         else:
             # Trailing newline already removed from buffer.
             self.buffer = buffer.rstrip("\n")
             self.current_line = self.current_line + 1
+            debug(f"{self.current_line}: {self.buffer}")
 
     def has_next(self) -> bool:
         return self.buffer is not None
@@ -93,16 +95,16 @@ def parse_name(reader) -> str:
         return match.group(1).replace("-", "_")
 
 
-def parse_sdist(reader: StdinReader) -> tuple[str, str]:
+def parse_sdist(reader: StdinReader) -> Optional[tuple[str, str]]:
     debug("Parsing sdist entry.")
     while True:
         if not reader.has_next():
             raise ValueError("Unexpected EOF while parsing sdist.")
+        if reader.peek() == "[[package]]":
+            debug("New package found, aborting processing of current entry.")
+            return None
+
         line = reader.next()
-        if line == "[[package]]":
-            raise ValueError(
-                f"Unexpected new package found at line {reader.line()} before sdist entry was found."
-            )
         match = sdist_property.match(line)
         if not match:
             # Other property, continue
@@ -114,7 +116,11 @@ def parse_sdist(reader: StdinReader) -> tuple[str, str]:
 def parse_dependency_details(reader: StdinReader) -> None:
     debug("Parsing dependency details.")
     name = parse_name(reader)
-    (url, hash) = parse_sdist(reader)
+    sdist = parse_sdist(reader)
+    if sdist is None:
+        return
+
+    (url, hash) = sdist
     print(f"""\
   resource "{name}" do
     url "{url}"
