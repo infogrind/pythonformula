@@ -1,0 +1,178 @@
+import argparse
+import sys
+import urllib.error
+from pathlib import Path
+
+from pythonformula import formula, project, tarball, uvlock
+
+SHA_PLACEHOLDER = "PLACEHOLDER"
+
+verbose = False
+
+
+def warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
+def debug(message: str) -> None:
+    if verbose:
+        print(f" 🐞 {message}", file=sys.stderr)
+
+
+def find_tap(project_dir: Path) -> Path | None:
+    candidates = (
+        project_dir.parent / "homebrew-tap",
+        Path.home() / "github" / "homebrew-tap",
+    )
+    for candidate in candidates:
+        if (candidate / "Formula").is_dir():
+            return candidate
+    return None
+
+
+def print_next_steps(tap: Path, formula_path: Path, name: str, tag: str) -> None:
+    relative = formula_path.relative_to(tap)
+    print(
+        f"""
+Next steps:
+  1. Review:  git -C {tap} diff {relative}
+  2. Audit:   brew audit --strict --formula {formula_path}
+  3. Install: brew install --build-from-source {formula_path}
+  4. Test:    brew test {name}
+  5. Publish: git -C {tap} add {relative} && git -C {tap} commit -m "{name} {tag}" && git -C {tap} push""",
+        file=sys.stderr,
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate or update a Homebrew formula for a uv-based Python project."
+    )
+    parser.add_argument(
+        "project_dir",
+        type=Path,
+        help="Directory containing pyproject.toml and uv.lock.",
+    )
+    parser.add_argument(
+        "--tap",
+        type=Path,
+        help="Path to a local Homebrew tap clone (default: homebrew-tap next to "
+        "the project, then ~/github/homebrew-tap).",
+    )
+    parser.add_argument(
+        "--tag",
+        help="Release tag to package (default: the project's latest git tag).",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print the formula instead of writing it into the tap.",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Do not download the release tarball; leave a sha256 placeholder.",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print debug output to stderr.",
+    )
+    args = parser.parse_args()
+    global verbose
+    verbose = args.verbose
+
+    project_dir = args.project_dir
+    pyproject_path = project_dir / "pyproject.toml"
+    lock_path = project_dir / "uv.lock"
+    for path in (pyproject_path, lock_path):
+        if not path.is_file():
+            sys.exit(f"error: {path} not found")
+
+    info = project.load_project(pyproject_path)
+    resources, lock_warnings = uvlock.read_resources(lock_path, info.name)
+    for message in lock_warnings:
+        warn(message)
+    debug(f"Found {len(resources)} resources for '{info.name}'.")
+
+    repo = project.github_repo(project_dir)
+    if repo is None:
+        sys.exit(
+            f"error: could not determine a GitHub repository from the 'origin' "
+            f"remote in {project_dir}"
+        )
+    owner, repo_name = repo
+
+    tag = args.tag or project.latest_tag(project_dir)
+    if tag is None:
+        sys.exit(f"error: no git tag found in {project_dir}; pass one with --tag")
+    debug(f"Using repository {owner}/{repo_name} at tag {tag}.")
+
+    url = f"https://github.com/{owner}/{repo_name}/archive/refs/tags/{tag}.tar.gz"
+    if args.offline:
+        sha256 = SHA_PLACEHOLDER
+    else:
+        debug(f"Downloading {url} to compute its sha256.")
+        try:
+            sha256 = tarball.sha256_of_url(url)
+        except urllib.error.URLError as error:
+            warn(f"could not download {url} ({error}); using a sha256 placeholder")
+            sha256 = SHA_PLACEHOLDER
+
+    if not info.description or info.description == project.PLACEHOLDER_DESCRIPTION:
+        warn("pyproject.toml has no real description; fill in `desc` manually")
+    if info.license is None:
+        warn("pyproject.toml declares no license; fill in `license` manually")
+    if tag.removeprefix("v") != info.version:
+        warn(f"pyproject.toml version '{info.version}' does not match tag '{tag}'")
+
+    tap = args.tap or find_tap(project_dir)
+    formula_path = tap / "Formula" / f"{info.name}.rb" if tap else None
+
+    if formula_path is not None and formula_path.is_file():
+        debug(f"Updating existing formula {formula_path}.")
+        text, update_warnings = formula.update_formula(
+            formula_path.read_text(),
+            url=url,
+            sha256=sha256,
+            python_dep=info.python_dep,
+            resources=resources,
+        )
+        for message in update_warnings:
+            warn(message)
+        action = "Updated"
+    else:
+        debug("No existing formula found, generating a new one.")
+        text = formula.render_formula(
+            name=info.name,
+            desc=info.description,
+            homepage=info.homepage or f"https://github.com/{owner}/{repo_name}",
+            url=url,
+            sha256=sha256,
+            license=info.license,
+            python_dep=info.python_dep,
+            resources=resources,
+            script_name=info.script_name,
+        )
+        action = "Created"
+
+    if args.stdout:
+        print(text, end="")
+    else:
+        if formula_path is None or tap is None:
+            sys.exit("error: no tap found; pass --tap or use --stdout")
+        formula_path.write_text(text)
+        print(f"{action} {formula_path}", file=sys.stderr)
+
+    if sha256 == SHA_PLACEHOLDER:
+        print(
+            f"\nFill in the sha256 first:\n  curl -sL {url} | shasum -a 256",
+            file=sys.stderr,
+        )
+    if not args.stdout and tap is not None and formula_path is not None:
+        print_next_steps(tap, formula_path, info.name, tag)
+
+
+if __name__ == "__main__":
+    main()

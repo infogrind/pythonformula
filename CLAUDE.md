@@ -4,29 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-Converts the dependencies in a `uv.lock` file (read from stdin) into Homebrew Formula `resource` blocks (written to stdout). Requires Python >=3.13 and uses `uv` for environment management.
+Generates or updates Homebrew formulas for uv-based Python projects. Pointed at a project directory (with `pyproject.toml` + `uv.lock`), it either writes a complete new `Formula/<name>.rb` into a local tap clone or surgically updates an existing one. Deployment is manual; the tool prints the steps. Requires Python >=3.13, zero runtime dependencies (stdlib only), managed with `uv`.
 
 ## Commands
 
 ```shell
-# Run the script
-uv run main.py < uv.lock
+# Run the tool
+uv run pythonformula <project-dir> [--tap PATH] [--tag TAG] [--stdout] [--offline] [-v]
 
 # Run all tests
 uv run pytest
 
 # Run a single test
-uv run pytest tests/test_main.py::TestMain::test_script
+uv run pytest tests/test_formula.py::test_update_formula
 ```
-
-Pass `-v`/`--verbose` to the script to print debug output to stderr.
 
 ## Architecture
 
-All logic lives in `main.py`:
+- `pythonformula/cli.py` — argparse, orchestration, warnings (stderr), tap auto-detection (`homebrew-tap` next to the project, then `~/github/homebrew-tap`), and printing the manual deploy steps.
+- `pythonformula/uvlock.py` — parses `uv.lock` with stdlib `tomllib`; computes the transitive closure of the root package's *runtime* dependencies (dev groups excluded) and returns one `Resource` (name/url/sha256) per package with an sdist. Package names are PEP-503-normalized for matching; resource names use `-`→`_`.
+- `pythonformula/project.py` — pyproject metadata (`ProjectInfo`) and git queries (latest tag, GitHub owner/repo from the `origin` remote) as small subprocess-based functions so tests can monkeypatch them.
+- `pythonformula/formula.py` — renders a full formula (house style: `Language::Python::Virtualenv`, `virtualenv_install_with_resources`) and performs the surgical update: a line-oriented pass over the existing `.rb` that replaces only the top-level `url`/`sha256`, the python `depends_on`, and the `resource … end` blocks, preserving all hand-written parts (`desc`, `license`, `test do`, other `depends_on`).
+- `pythonformula/tarball.py` — downloads the GitHub release tarball and computes its sha256 (skipped with `--offline`, which emits a `PLACEHOLDER`).
 
-- `StdinReader` wraps `sys.stdin` with single-line lookahead (`peek()`/`next()`) and line-number tracking.
-- The parser is a hand-rolled, line-oriented parser using regexes on lines — it does not parse TOML generally. It skips the lockfile's initial fields, then processes each `[[package]]` section: extracting `name` (with `-` converted to `_`) and the `sdist` url/hash. Packages without an sdist entry (e.g. virtual packages) are silently skipped.
-- Output is printed directly during parsing, one Homebrew `resource` block per package.
+Key behaviors: the packaged version comes from the git tag, not pyproject's `version` (a mismatch triggers a warning, as do placeholder descriptions, missing licenses, no-sdist dependencies, and unexpected `depends_on` entries).
 
-The single test in `tests/test_main.py` is end-to-end: it patches stdin/stdout and compares the full output for a sample lockfile.
+Tests are pytest-style; `tests/test_cli.py` runs `cli.main()` end-to-end on temp fixtures with git/network monkeypatched (`--offline`), and reuses the fixture lockfile from `tests/test_uvlock.py`.
