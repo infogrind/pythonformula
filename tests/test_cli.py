@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -26,7 +27,11 @@ def project_dir(tmp_path, monkeypatch):
     (directory / "pyproject.toml").write_text(PYPROJECT)
     (directory / "uv.lock").write_text(LOCKFILE)
     monkeypatch.setattr(project, "latest_tag", lambda d: "v1.0")
-    monkeypatch.setattr(project, "github_repo", lambda d: ("infogrind", "myproj"))
+    monkeypatch.setattr(
+        project,
+        "github_repo",
+        lambda d: ("infogrind", "myproj") if Path(d) == directory else None,
+    )
     return directory
 
 
@@ -117,7 +122,20 @@ end
 
     assert f"Updated {formula_path}" in captured.err
     assert "Next steps:" in captured.err
-    assert "brew audit --strict" in captured.err
+    assert "brew audit --strict <owner>/<tap>/myproj" in captured.err
+    assert "brew install --build-from-source <owner>/<tap>/myproj" in captured.err
+
+
+def test_next_steps_use_tap_name(project_dir, tmp_path, monkeypatch, capsys):
+    tap = tmp_path / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+    monkeypatch.setattr(project, "tap_name", lambda d: "infogrind/tap")
+
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--offline")
+    captured = capsys.readouterr()
+
+    assert "brew install --build-from-source infogrind/tap/myproj" in captured.err
+    assert 'cp' in captured.err and '"$(brew --repository infogrind/tap)"/Formula/' in captured.err
 
 
 def test_tap_auto_detection_next_to_project(project_dir, tmp_path, monkeypatch, capsys):

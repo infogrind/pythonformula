@@ -77,3 +77,13 @@ def github_repo(project_dir: Path) -> tuple[str, str] | None:
     if not match:
         return None
     return match.group(1), match.group(2)
+
+
+# Returns the short tap name brew uses (e.g. "infogrind/tap" for a clone of
+# github.com/infogrind/homebrew-tap), or None if it cannot be determined.
+def tap_name(tap_dir: Path) -> str | None:
+    repo = github_repo(tap_dir)
+    if repo is None:
+        return None
+    owner, name = repo
+    return f"{owner}/{name.removeprefix('homebrew-')}"
