@@ -79,6 +79,27 @@ def github_repo(project_dir: Path) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
+# Creates a gzipped tarball of the given tag, laid out like a GitHub archive
+# (single top-level directory named `prefix`). Returns False on failure.
+def archive_tag(project_dir: Path, tag: str, prefix: str, output: Path) -> bool:
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_dir),
+            "archive",
+            "--format=tar.gz",
+            f"--prefix={prefix}/",
+            "-o",
+            str(output),
+            tag,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 # Returns the short tap name brew uses (e.g. "infogrind/tap" for a clone of
 # github.com/infogrind/homebrew-tap), or None if it cannot be determined.
 def tap_name(tap_dir: Path) -> str | None:

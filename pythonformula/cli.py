@@ -1,5 +1,6 @@
 import argparse
 import sys
+import tempfile
 import urllib.error
 from pathlib import Path
 
@@ -30,16 +31,26 @@ def find_tap(project_dir: Path) -> Path | None:
     return None
 
 
-def print_next_steps(tap: Path, formula_path: Path, name: str, tag: str) -> None:
+def print_next_steps(
+    tap: Path, formula_path: Path, name: str, tag: str, *, local: bool = False
+) -> None:
     relative = formula_path.relative_to(tap)
     tap_id = project.tap_name(tap) or "<owner>/<tap>"
-    steps = [
-        f"Review:  git -C {tap} diff {relative}",
-        f"Audit:   brew audit --strict {tap_id}/{name}",
-        f"Install: brew install --build-from-source {tap_id}/{name}",
-        f"Test:    brew test {name}",
-        f'Publish: git -C {tap} add {relative} && git -C {tap} commit -m "{name} {tag}" && git -C {tap} push',
-    ]
+    steps = [f"Review:  git -C {tap} diff {relative}"]
+    if local:
+        steps += [
+            f"Install: brew reinstall --build-from-source {tap_id}/{name}",
+            f"Test:    brew test {name}",
+            f"Publish: push the tag ({tag}) to GitHub, rerun pythonformula "
+            "without --local, then commit and push the tap",
+        ]
+    else:
+        steps += [
+            f"Audit:   brew audit --strict {tap_id}/{name}",
+            f"Install: brew install --build-from-source {tap_id}/{name}",
+            f"Test:    brew test {name}",
+            f'Publish: git -C {tap} add {relative} && git -C {tap} commit -m "{name} {tag}" && git -C {tap} push',
+        ]
     # Homebrew only installs formulas addressed through an installed tap. If
     # the tap directory is not brew's own clone, the formula must be staged
     # there for the brew commands to see it, and cleaned up afterwards.
@@ -75,10 +86,18 @@ def main() -> None:
         action="store_true",
         help="Print the formula instead of writing it into the tap.",
     )
-    parser.add_argument(
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument(
         "--offline",
         action="store_true",
         help="Do not download the release tarball; leave a sha256 placeholder.",
+    )
+    source_group.add_argument(
+        "--local",
+        action="store_true",
+        help="Build the tag's tarball locally with git archive and point the "
+        "formula at it via a file:// url, so it can be tested before the tag "
+        "is pushed to GitHub.",
     )
     parser.add_argument(
         "--verbose",
@@ -116,16 +135,28 @@ def main() -> None:
         sys.exit(f"error: no git tag found in {project_dir}; pass one with --tag")
     debug(f"Using repository {owner}/{repo_name} at tag {tag}.")
 
-    url = f"https://github.com/{owner}/{repo_name}/archive/refs/tags/{tag}.tar.gz"
-    if args.offline:
-        sha256 = SHA_PLACEHOLDER
+    if args.local:
+        version = tag.removeprefix("v")
+        tarball_path = Path(tempfile.gettempdir()) / f"{info.name}-{version}.tar.gz"
+        debug(f"Archiving tag {tag} to {tarball_path}.")
+        if not project.archive_tag(
+            project_dir, tag, f"{info.name}-{version}", tarball_path
+        ):
+            sys.exit(f"error: git archive failed for tag '{tag}' in {project_dir}")
+        url = f"file://{tarball_path}"
+        sha256 = tarball.sha256_of_file(tarball_path)
+        warn("formula points at a local tarball; rerun without --local before publishing")
     else:
-        debug(f"Downloading {url} to compute its sha256.")
-        try:
-            sha256 = tarball.sha256_of_url(url)
-        except urllib.error.URLError as error:
-            warn(f"could not download {url} ({error}); using a sha256 placeholder")
+        url = f"https://github.com/{owner}/{repo_name}/archive/refs/tags/{tag}.tar.gz"
+        if args.offline:
             sha256 = SHA_PLACEHOLDER
+        else:
+            debug(f"Downloading {url} to compute its sha256.")
+            try:
+                sha256 = tarball.sha256_of_url(url)
+            except urllib.error.URLError as error:
+                warn(f"could not download {url} ({error}); using a sha256 placeholder")
+                sha256 = SHA_PLACEHOLDER
 
     if not info.description or info.description == project.PLACEHOLDER_DESCRIPTION:
         warn("pyproject.toml has no real description; fill in `desc` manually")
@@ -178,7 +209,7 @@ def main() -> None:
             file=sys.stderr,
         )
     if not args.stdout and tap is not None and formula_path is not None:
-        print_next_steps(tap, formula_path, info.name, tag)
+        print_next_steps(tap, formula_path, info.name, tag, local=args.local)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ Generates or updates Homebrew formulas for uv-based Python projects. Pointed at 
 
 ```shell
 # Run the tool
-uv run pythonformula <project-dir> [--tap PATH] [--tag TAG] [--stdout] [--offline] [-v]
+uv run pythonformula <project-dir> [--tap PATH] [--tag TAG] [--stdout] [--offline|--local] [-v]
 
 # Run all tests
 uv run pytest

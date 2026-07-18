@@ -23,7 +23,16 @@ uv run pythonformula ../myproject --tap ../homebrew-tap --tag v1.2
 
 # Skip the tarball download (leaves a sha256 placeholder)
 uv run pythonformula ../myproject --offline
+
+# Test a tag before pushing it: build the tarball locally with git archive
+# and point the formula at it via a file:// url
+uv run pythonformula ../myproject --local
 ```
+
+With `--local` you can bump the version, `git tag`, and run a full
+`brew reinstall --build-from-source` + `brew test` cycle without pushing
+anything. Rerun without `--local` after pushing the tag to restore the
+GitHub url and its sha256 before committing the tap.
 
 The release tag defaults to the project's latest git tag; the GitHub archive
 URL is derived from the project's `origin` remote, and its sha256 is computed

@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from pathlib import Path
 
@@ -161,6 +162,31 @@ def test_tap_auto_detection_next_to_project(project_dir, tmp_path, monkeypatch, 
     formula_path = tap / "Formula" / "myproj.rb"
     assert formula_path.is_file()
     assert f"Created {formula_path}" in captured.err
+
+
+def test_local_mode(project_dir, tmp_path, monkeypatch, capsys):
+    tap = tmp_path / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+
+    def fake_archive(directory, tag, prefix, output):
+        assert tag == "v1.0"
+        assert prefix == "myproj-1.0"
+        output.write_bytes(b"tarball")
+        return True
+
+    monkeypatch.setattr(project, "archive_tag", fake_archive)
+
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--local")
+    captured = capsys.readouterr()
+
+    text = (tap / "Formula" / "myproj.rb").read_text()
+    assert 'url "file://' in text and 'myproj-1.0.tar.gz"' in text
+    assert f'sha256 "{hashlib.sha256(b"tarball").hexdigest()}"' in text
+
+    assert "rerun without --local before publishing" in captured.err
+    assert "brew reinstall --build-from-source" in captured.err
+    assert "brew audit" not in captured.err
+    assert "push the tag (v1.0)" in captured.err
 
 
 def test_version_mismatch_warning(project_dir, monkeypatch, capsys):
