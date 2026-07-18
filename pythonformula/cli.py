@@ -31,23 +31,24 @@ def find_tap(project_dir: Path) -> Path | None:
 
 
 def print_next_steps(tap: Path, formula_path: Path, name: str, tag: str) -> None:
-    # Homebrew only installs formulas addressed through an installed tap, so
-    # the formula is staged into brew's own tap clone for local testing.
     relative = formula_path.relative_to(tap)
     tap_id = project.tap_name(tap) or "<owner>/<tap>"
-    brew_clone = f'"$(brew --repository {tap_id})"'
-    print(
-        f"""
-Next steps:
-  1. Review:  git -C {tap} diff {relative}
-  2. Stage:   cp {formula_path} {brew_clone}/Formula/
-  3. Audit:   brew audit --strict {tap_id}/{name}
-  4. Install: brew install --build-from-source {tap_id}/{name}
-  5. Test:    brew test {name}
-  6. Publish: git -C {tap} add {relative} && git -C {tap} commit -m "{name} {tag}" && git -C {tap} push
-  7. Clean:   git -C {brew_clone} checkout Formula/ && brew update""",
-        file=sys.stderr,
-    )
+    steps = [
+        f"Review:  git -C {tap} diff {relative}",
+        f"Audit:   brew audit --strict {tap_id}/{name}",
+        f"Install: brew install --build-from-source {tap_id}/{name}",
+        f"Test:    brew test {name}",
+        f'Publish: git -C {tap} add {relative} && git -C {tap} commit -m "{name} {tag}" && git -C {tap} push',
+    ]
+    # Homebrew only installs formulas addressed through an installed tap. If
+    # the tap directory is not brew's own clone, the formula must be staged
+    # there for the brew commands to see it, and cleaned up afterwards.
+    if "Library/Taps" not in str(tap.resolve()):
+        brew_clone = f'"$(brew --repository {tap_id})"'
+        steps.insert(1, f"Stage:   cp {formula_path} {brew_clone}/Formula/")
+        steps.append(f"Clean:   git -C {brew_clone} checkout Formula/ && brew update")
+    numbered = "\n".join(f"  {n}. {step}" for n, step in enumerate(steps, 1))
+    print(f"\nNext steps:\n{numbered}", file=sys.stderr)
 
 
 def main() -> None:

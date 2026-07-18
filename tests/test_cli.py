@@ -138,6 +138,19 @@ def test_next_steps_use_tap_name(project_dir, tmp_path, monkeypatch, capsys):
     assert 'cp' in captured.err and '"$(brew --repository infogrind/tap)"/Formula/' in captured.err
 
 
+def test_no_staging_steps_when_tap_is_brew_clone(project_dir, tmp_path, monkeypatch, capsys):
+    tap = tmp_path / "Library" / "Taps" / "infogrind" / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+    monkeypatch.setattr(project, "tap_name", lambda d: "infogrind/tap")
+
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--offline")
+    captured = capsys.readouterr()
+
+    assert "brew install --build-from-source infogrind/tap/myproj" in captured.err
+    assert "Stage:" not in captured.err
+    assert "Clean:" not in captured.err
+
+
 def test_tap_auto_detection_next_to_project(project_dir, tmp_path, monkeypatch, capsys):
     tap = tmp_path / "homebrew-tap"
     (tap / "Formula").mkdir(parents=True)
