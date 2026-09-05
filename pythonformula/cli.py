@@ -62,9 +62,37 @@ def print_next_steps(
     print(f"\nNext steps:\n{numbered}", file=sys.stderr)
 
 
+WORKFLOW = """\
+Recommended workflow:
+  1. Local, side-effect-free iteration (repeat freely; nothing external changes):
+       - Preview the rendered formula with --stdout --offline: no network
+         access, no files written, no tap required.
+       - Bump the version in pyproject.toml and `git tag vX.Y.Z` locally.
+       - Run with --local to build the formula against a tarball made from
+         that tag with `git archive` (a file:// url), so it can be
+         installed and tested before the tag is pushed anywhere.
+       - `brew reinstall --build-from-source <tap>/<name>` and
+         `brew test <name>` to validate. Freely `git tag -d` and retag to
+         iterate; nothing has left your machine yet.
+
+  2. Publish (only once local testing passes):
+       - Push the tag: `git push --tags`.
+       - Rerun pythonformula without --local to fetch the real GitHub
+         release tarball and compute its sha256.
+       - `brew audit --strict`, install, and test again, now against the
+         real url.
+       - Commit and push the updated formula in the tap.
+
+Every run prints the exact next steps (Review/Audit/Install/Test/Publish)
+for the mode it ran in.
+"""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate or update a Homebrew formula for a uv-based Python project."
+        description="Generate or update a Homebrew formula for a uv-based Python project.",
+        epilog=WORKFLOW,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "project_dir",
