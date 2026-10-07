@@ -41,8 +41,10 @@ def print_next_steps(
         steps += [
             f"Install: brew reinstall --build-from-source {tap_id}/{name}",
             f"Test:    brew test {name}",
-            f"Publish: push the tag ({tag}) to GitHub, rerun pythonformula "
-            "without --local, then commit and push the tap",
+            (
+                f"Publish: push the tag ({tag}) to GitHub, rerun pythonformula "
+                "without --local, then commit and push the tap"
+            ),
         ]
     else:
         steps += [
@@ -188,8 +190,6 @@ def main() -> None:
 
     if not info.description or info.description == project.PLACEHOLDER_DESCRIPTION:
         warn("pyproject.toml has no real description; fill in `desc` manually")
-    if info.license is None:
-        warn("pyproject.toml declares no license; fill in `license` manually")
     if tag.removeprefix("v") != info.version:
         warn(f"pyproject.toml version '{info.version}' does not match tag '{tag}'")
 
@@ -204,6 +204,7 @@ def main() -> None:
             sha256=sha256,
             python_dep=info.python_dep,
             resources=resources,
+            license=info.license,
         )
         for message in update_warnings:
             warn(message)
@@ -222,6 +223,11 @@ def main() -> None:
             script_name=info.script_name,
         )
         action = "Created"
+
+    # Only worth a warning while the formula still lacks a license line; one
+    # filled in by hand is kept by updates.
+    if info.license_warning and not formula.has_license(text):
+        warn(info.license_warning)
 
     if args.stdout:
         print(text, end="")

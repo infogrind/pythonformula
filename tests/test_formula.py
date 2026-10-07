@@ -1,6 +1,8 @@
 from pythonformula.formula import (
     class_name,
+    has_license,
     render_formula,
+    render_license,
     update_formula,
 )
 from pythonformula.uvlock import Resource
@@ -156,3 +158,93 @@ end
     assert warnings == [
         'existing depends_on "maturin" kept; remove it if no longer needed'
     ]
+
+
+def test_render_license():
+    assert render_license("MIT") == '"MIT"'
+    assert render_license("MIT OR Apache-2.0") == 'any_of: ["MIT", "Apache-2.0"]'
+    assert render_license("MIT AND ISC") == 'all_of: ["MIT", "ISC"]'
+
+
+def test_render_formula_with_license_expression():
+    text = render_formula(
+        name="my-proj",
+        desc="A test project",
+        homepage="https://github.com/infogrind/myproj",
+        url="https://github.com/infogrind/myproj/archive/refs/tags/v1.0.tar.gz",
+        sha256="newsha",
+        license="MIT OR Apache-2.0",
+        python_dep="python@3.13",
+        resources=[],
+        script_name="myproj",
+    )
+    assert '  sha256 "newsha"\n  license any_of: ["MIT", "Apache-2.0"]\n\n' in text
+
+
+def _update(text, license):
+    return update_formula(
+        text,
+        url="https://github.com/infogrind/myproj/archive/refs/tags/v1.0.tar.gz",
+        sha256="newsha",
+        python_dep="python@3.13",
+        resources=RESOURCES,
+        license=license,
+    )
+
+
+UNLICENSED_FORMULA = STALE_FORMULA.replace('  license "MIT"\n', "")
+
+
+def test_update_formula_adds_license_after_sha256():
+    text, warnings = _update(UNLICENSED_FORMULA, "MIT")
+    # Identical to updating the formula that already had the line.
+    assert text == _update(STALE_FORMULA, "MIT")[0]
+    assert '  sha256 "newsha"\n  license "MIT"\n\n  depends_on' in text
+    assert not any("license" in w for w in warnings)
+
+
+def test_update_formula_without_resources_adds_license():
+    text, _ = update_formula(
+        UNLICENSED_FORMULA,
+        url="u",
+        sha256="newsha",
+        python_dep="python@3.13",
+        resources=[],
+        license="MIT",
+    )
+    assert '  sha256 "newsha"\n  license "MIT"\n' in text
+    assert 'resource "' not in text
+
+
+def test_update_formula_keeps_matching_license():
+    text, warnings = _update(STALE_FORMULA, "MIT")
+    assert text.count("license") == 1
+    assert not any("license" in w for w in warnings)
+
+
+def test_update_formula_keeps_license_when_none_declared():
+    for formula_text in (STALE_FORMULA, STALE_FORMULA.replace('"MIT"', '"BSD-2-Clause"')):
+        text, warnings = _update(formula_text, None)
+        assert formula_text.split("\n")[7] in text.splitlines()
+        assert not any("license" in w for w in warnings)
+
+
+def test_update_formula_replaces_changed_license():
+    text, warnings = _update(STALE_FORMULA, "Apache-2.0")
+    assert '  license "Apache-2.0"' in text
+    assert 'license "MIT"' not in text
+    assert 'license changed from "MIT" to "Apache-2.0"' in warnings
+
+
+def test_update_formula_keeps_multiline_license():
+    multiline = STALE_FORMULA.replace(
+        '  license "MIT"\n', '  license any_of: [\n    "MIT",\n    "Apache-2.0",\n  ]\n'
+    )
+    text, warnings = _update(multiline, "ISC")
+    assert '  license any_of: [\n    "MIT",\n    "Apache-2.0",\n  ]\n' in text
+    assert 'existing multi-line license kept; check it matches "ISC"' in warnings
+
+
+def test_has_license():
+    assert has_license(STALE_FORMULA)
+    assert not has_license(UNLICENSED_FORMULA)

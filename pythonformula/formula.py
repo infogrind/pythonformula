@@ -1,5 +1,6 @@
 import re
 
+from pythonformula.project import split_spdx
 from pythonformula.uvlock import Resource
 
 _RESOURCE_START = re.compile(r'^(\s*)resource "[^"]+" do\s*$')
@@ -7,10 +8,25 @@ _URL_LINE = re.compile(r'^(\s*)url "[^"]*"$')
 _SHA_LINE = re.compile(r'^(\s*)sha256 "[^"]*"$')
 _PYTHON_DEP = re.compile(r'^(\s*)depends_on "python@[\d.]+"$')
 _OTHER_DEP = re.compile(r'^\s*depends_on "([^"]+)"$')
+_LICENSE_LINE = re.compile(r"^( {2})license\b(.*)$")
 
 
 def class_name(name: str) -> str:
     return "".join(part.capitalize() for part in re.split(r"[-_.]", name))
+
+
+# Renders the argument of Homebrew's `license` DSL for an SPDX expression
+# that project.resolve_license accepted, e.g. `"MIT"` or
+# `any_of: ["MIT", "Apache-2.0"]`.
+def render_license(expression: str) -> str:
+    parts = split_spdx(expression)
+    if parts is None:
+        raise ValueError(f"unsupported license expression: {expression}")
+    ids, operator = parts
+    if operator is None:
+        return f'"{ids[0]}"'
+    keyword = "any_of" if operator == "OR" else "all_of"
+    return f"{keyword}: [{', '.join(f'"{i}"' for i in ids)}]"
 
 
 def render_resources(resources: list[Resource]) -> str:
@@ -35,7 +51,7 @@ def render_formula(
     resources: list[Resource],
     script_name: str,
 ) -> str:
-    license_line = f'\n  license "{license}"' if license else ""
+    license_line = f"\n  license {render_license(license)}" if license else ""
     resource_section = f"\n{render_resources(resources)}\n" if resources else ""
     return f'''class {class_name(name)} < Formula
   include Language::Python::Virtualenv
@@ -58,9 +74,15 @@ end
 '''
 
 
+def has_license(text: str) -> bool:
+    return any(_LICENSE_LINE.match(line) for line in text.splitlines())
+
+
 # Surgically updates an existing formula: replaces the top-level url and
 # sha256, the python depends_on, and all resource blocks, while leaving
-# everything else (desc, homepage, license, test block, ...) untouched.
+# everything else (desc, homepage, test block, ...) untouched. The license
+# line is added after sha256 if missing and replaced only if `license`
+# differs from it; with `license` None an existing line is always kept.
 def update_formula(
     text: str,
     *,
@@ -68,12 +90,16 @@ def update_formula(
     sha256: str,
     python_dep: str,
     resources: list[Resource],
+    license: str | None = None,
 ) -> tuple[str, list[str]]:
     warnings: list[str] = []
     lines = text.splitlines()
     kept: list[str] = []
     insert_at: int | None = None
     replaced_url = replaced_sha = False
+    license_arg = render_license(license) if license else None
+    sha_at: int | None = None
+    found_license = False
 
     i = 0
     while i < len(lines):
@@ -101,6 +127,24 @@ def update_formula(
         if match and replaced_url and not replaced_sha:
             kept.append(f'{match.group(1)}sha256 "{sha256}"')
             replaced_sha = True
+            sha_at = len(kept)
+            i += 1
+            continue
+        match = _LICENSE_LINE.match(line)
+        if match and not found_license:
+            found_license = True
+            existing = match.group(2).strip()
+            if license_arg is not None and existing != license_arg:
+                if existing.count("[") != existing.count("]") or existing.endswith(","):
+                    warnings.append(
+                        f"existing multi-line license kept; check it matches {license_arg}"
+                    )
+                else:
+                    warnings.append(
+                        f"license changed from {existing} to {license_arg}"
+                    )
+                    line = f"{match.group(1)}license {license_arg}"
+            kept.append(line)
             i += 1
             continue
         match = _PYTHON_DEP.match(line)
@@ -120,6 +164,15 @@ def update_formula(
         warnings.append("no url line found in existing formula; url not updated")
     if not replaced_sha:
         warnings.append("no sha256 line found in existing formula; sha256 not updated")
+
+    if license_arg is not None and not found_license:
+        if sha_at is None:
+            warnings.append("no sha256 line found in existing formula; license not added")
+        else:
+            indent = _SHA_LINE.match(kept[sha_at - 1]).group(1)
+            kept.insert(sha_at, f"{indent}license {license_arg}")
+            if insert_at is not None and insert_at >= sha_at:
+                insert_at += 1
 
     if resources:
         block_lines = render_resources(resources).splitlines()

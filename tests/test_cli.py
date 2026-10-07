@@ -198,3 +198,73 @@ def test_version_mismatch_warning(project_dir, monkeypatch, capsys):
 def test_missing_project_dir(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="pyproject.toml not found"):
         run_cli(monkeypatch, str(tmp_path / "nonexistent"), "--stdout", "--offline")
+
+
+# A formula created before the project declared a license (taxcalc v0.1.0),
+# updated after `license = "MIT"` was added to pyproject.toml.
+FORMULA_WITHOUT_LICENSE = """\
+class Myproj < Formula
+  include Language::Python::Virtualenv
+
+  desc "A test project"
+  homepage "https://github.com/infogrind/myproj"
+  url "https://github.com/infogrind/myproj/archive/refs/tags/v0.9.tar.gz"
+  sha256 "oldsha"
+
+  depends_on "python@3.13"
+
+  def install
+    virtualenv_install_with_resources
+  end
+
+  test do
+    assert_path_exists bin/"myproj"
+  end
+end
+"""
+
+
+def test_update_adds_license(project_dir, tmp_path, monkeypatch, capsys):
+    tap = tmp_path / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+    formula_path = tap / "Formula" / "myproj.rb"
+    formula_path.write_text(FORMULA_WITHOUT_LICENSE)
+
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--offline")
+
+    assert '  sha256 "PLACEHOLDER"\n  license "MIT"\n\n' in formula_path.read_text()
+
+
+def test_stdout_previews_update_with_license(project_dir, tmp_path, monkeypatch, capsys):
+    tap = tmp_path / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+    (tap / "Formula" / "myproj.rb").write_text(FORMULA_WITHOUT_LICENSE)
+
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--stdout", "--offline")
+
+    assert '  sha256 "PLACEHOLDER"\n  license "MIT"\n\n' in capsys.readouterr().out
+
+
+def test_license_file_warns_and_keeps_hand_written_license(
+    project_dir, tmp_path, monkeypatch, capsys
+):
+    pyproject = project_dir / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace('license = "MIT"', 'license = { file = "LICENSE" }')
+    )
+
+    run_cli(monkeypatch, str(project_dir), "--stdout", "--offline")
+    captured = capsys.readouterr()
+    assert "license" not in captured.out
+    assert "license is only given as a file (LICENSE)" in captured.err
+
+    # Once the license has been filled in by hand, updates keep it silently.
+    tap = tmp_path / "homebrew-tap"
+    (tap / "Formula").mkdir(parents=True)
+    formula_path = tap / "Formula" / "myproj.rb"
+    formula_path.write_text(
+        FORMULA_WITHOUT_LICENSE.replace('"oldsha"\n', '"oldsha"\n  license "BSD-2-Clause"\n')
+    )
+    run_cli(monkeypatch, str(project_dir), "--tap", str(tap), "--offline")
+    assert '  license "BSD-2-Clause"\n' in formula_path.read_text()
+    assert "fill in `license`" not in capsys.readouterr().err
