@@ -1,5 +1,6 @@
 import pytest
 
+from pythonformula import project
 from pythonformula.project import load_project, resolve_license
 
 MIT_CLASSIFIER = "License :: OSI Approved :: MIT License"
@@ -105,3 +106,24 @@ def test_load_project_license(tmp_path):
     path.write_text('[project]\nname = "p"\nlicense = { text = "MIT" }\n')
     info = load_project(path)
     assert (info.license, info.license_warning) == ("MIT", None)
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "git@github.com:infogrind/homebrew-tap.git",
+        "git@github.com:/infogrind/homebrew-tap",
+        "https://github.com/infogrind/homebrew-tap.git",
+        "https://github.com/infogrind/homebrew-tap/",
+        "ssh://git@github.com/infogrind/homebrew-tap",
+    ],
+)
+def test_github_repo_and_tap_name(tmp_path, monkeypatch, remote):
+    monkeypatch.setattr(project, "_git", lambda d, *args: remote)
+    assert project.github_repo(tmp_path) == ("infogrind", "homebrew-tap")
+    assert project.tap_name(tmp_path) == "infogrind/tap"
+
+
+def test_github_repo_rejects_other_hosts(tmp_path, monkeypatch):
+    monkeypatch.setattr(project, "_git", lambda d, *args: "git@gitlab.com:a/b.git")
+    assert project.github_repo(tmp_path) is None

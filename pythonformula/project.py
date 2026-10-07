@@ -175,7 +175,7 @@ def github_repo(project_dir: Path) -> tuple[str, str] | None:
     url = _git(project_dir, "remote", "get-url", "origin")
     if not url:
         return None
-    match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    match = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$", url)
     if not match:
         return None
     return match.group(1), match.group(2)
